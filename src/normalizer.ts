@@ -5,6 +5,7 @@ type Format = 'json' | 'xml'
 interface RawXmlForArray {
     description: string
     debit?: string
+    credit?: string
     postedDate: string
 }
 

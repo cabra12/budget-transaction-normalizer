@@ -1,4 +1,4 @@
-import { detectFormat, normalizeJsonRecord, normalizeXmlRecord, normalizePayload, summarizeByCategory } from '../src/normalizer'
+import { detectFormat, parseXmlIntoArray, normalizeJsonRecord, normalizeXmlRecord, normalizePayload, summarizeByCategory } from '../src/normalizer'
 
 describe('detectFormat', () => {
     test('detects XML from a string starting with "<"', () => {
@@ -15,6 +15,27 @@ describe('detectFormat', () => {
 
     test('throws on an unrecognizable payload', () => {
         expect(() => detectFormat(42)).toThrow(/Could not detect payload format/)
+    })
+})
+
+describe('parseXmlIntoArray', () => {
+    test('parses a single <transaction> into an array of one', async () => {
+        const xml = `
+      <transactions>
+        <transaction>
+          <description>Gas Station</description>
+          <debit>28.40</debit>
+          <postedDate>2026-05-04</postedDate>
+        </transaction>
+      </transactions>
+    `
+        const result = await parseXmlIntoArray(xml)
+        expect(result).toHaveLength(1)
+        expect(result[0].description).toBe('Gas Station')
+    })
+
+    test('throws when the XML has no <transactions> root', async () => {
+        await expect(parseXmlIntoArray('<foo></foo>')).rejects.toThrow(/must have a <transaction> root/)
     })
 })
 
