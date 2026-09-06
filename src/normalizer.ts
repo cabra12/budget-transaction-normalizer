@@ -1,6 +1,6 @@
 const { parseStringPromise } = require('xml2js')
 
-interface RawTransactionRecords {
+interface RawXmlForArray {
     description: string
     debit?: string
     postedDate: string
@@ -13,7 +13,28 @@ interface RawJsonRecord {
     category?: unknown
 }
 
-const detectFormat = (payload: unknown): string => {
+interface RawXmlRecord {
+    description?: unknown
+    debit?: unknown
+    credit?: unknown
+    postedDate?: unknown
+}
+
+interface NormalizedData {
+    merchant: string
+    amount: number
+    date: string
+    category: string
+    source: 'json' | 'xml'
+}
+
+interface NormalizedTransaction {
+    format: 'json' | 'xml'
+    normalized: NormalizedData[]
+    rejected?: { record: unknown; reason: string }[]
+}
+
+const detectFormat = (payload: unknown): 'json' | 'xml' => {
     if (typeof payload === 'string' && payload.trim().startsWith('<')) {
         return 'xml'
     } else if (typeof payload === 'object' && payload !== null) {
@@ -23,7 +44,7 @@ const detectFormat = (payload: unknown): string => {
     }
 }
 
-const parseXmlIntoArray = async (xmlString: string): Promise<RawTransactionRecords[]> => {
+const parseXmlIntoArray = async (xmlString: string): Promise<RawXmlForArray[]> => {
     let parsed
 
     try {
@@ -41,12 +62,12 @@ const parseXmlIntoArray = async (xmlString: string): Promise<RawTransactionRecor
         throw new Error('XML must have a <transaction> root containing at least one <transaction>.')
     }
 
-    const rawRecords: RawTransactionRecords[] = Array.isArray(root.transaction) ? root.transaction : [root.transaction]
+    const rawRecords: RawXmlForArray[] = Array.isArray(root.transaction) ? root.transaction : [root.transaction]
 
     return rawRecords
 }
 
-const normalizeJsonRecord = (record: RawJsonRecord) => {
+const normalizeJsonRecord = (record: RawJsonRecord): NormalizedData => {
     const { merchant, amount, date, category } = record
 
     if (!merchant || typeof merchant !== 'string' || !merchant.trim()) {
@@ -72,4 +93,91 @@ const normalizeJsonRecord = (record: RawJsonRecord) => {
         category: category && typeof category === 'string' && category.trim() ? category.trim() : 'Uncategorized',
         source: 'json',
     }
+}
+
+const normalizeXmlRecord = (record: RawXmlRecord): NormalizedData => {
+    const { description, debit, credit, postedDate } = record
+
+    if (!description || typeof description !== 'string' || !description.trim()) {
+        throw new Error('Missing or invalid "description" (must be a non-empty string).')
+    }
+
+    const hasDebit = debit !== undefined && debit !== null && debit !== ''
+    const hasCredit = credit !== undefined && credit !== null && credit !== ''
+
+    if (hasDebit === hasCredit) {
+        throw new Error('Exactly one of "debit" or "credit" must be present (not both, not neither).')
+    }
+
+    let amount
+    if (hasDebit) {
+        const numericDebit = Number(debit)
+        if (Number.isNaN(numericDebit) || numericDebit < 0) {
+            throw new Error('"debit" must be a non-negative number.')
+        }
+        amount = numericDebit
+    } else {
+        const numericCredit = Number(credit)
+        if (Number.isNaN(numericCredit) || numericCredit < 0) {
+            throw new Error('"credit" must be a non-negative number.')
+        }
+        amount = -numericCredit // money received reduces net spend
+    }
+
+    if (!postedDate || typeof postedDate !== 'string' || Number.isNaN(Date.parse(postedDate))) {
+        throw new Error('Missing or invalid "postedDate" (must be a parseable date string).')
+    }
+
+    return {
+        merchant: description.trim(),
+        amount: amount,
+        date: new Date(postedDate).toISOString().slice(0, 10),
+        category: 'Uncategorized',
+        source: 'xml',
+    }
+}
+
+const normalizePayload = async (payload: unknown): Promise<NormalizedTransaction> => {
+    const format = detectFormat(payload)
+
+    let rawRecords
+    if (format === 'xml' && typeof payload === 'string') {
+        rawRecords = await parseXmlIntoArray(payload)
+    } else {
+        rawRecords = Array.isArray(payload) ? payload : [payload]
+    }
+
+    const normalized = []
+    const rejected = []
+
+    for (const rawRecord of rawRecords) {
+        try {
+            const record = format === 'xml' ? normalizeXmlRecord(rawRecord) : normalizeJsonRecord(rawRecord)
+            normalized.push(record)
+        } catch (err) {
+            if (err instanceof Error) {
+                rejected.push({ record: rawRecord, reason: err.message })
+            }
+        }
+    }
+
+    return { format, normalized, rejected }
+}
+
+const summarizeByCategory = (transactions: NormalizedData[]): Record<string, number> => {
+    const totals: Record<string, number> = {}
+    for (const t of transactions) {
+        const key = t.category || 'Uncategorized'
+        totals[key] = Math.round(((totals[key] || 0) + t.amount) * 100) / 100
+    }
+    return totals
+}
+
+module.exports = {
+    detectFormat,
+    parseXmlIntoArray,
+    normalizeJsonRecord,
+    normalizeXmlRecord,
+    normalizePayload,
+    summarizeByCategory,
 }
