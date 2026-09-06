@@ -1,5 +1,7 @@
 const { parseStringPromise } = require('xml2js')
 
+type Format = 'json' | 'xml'
+
 interface RawXmlForArray {
     description: string
     debit?: string
@@ -25,16 +27,16 @@ interface NormalizedData {
     amount: number
     date: string
     category: string
-    source: 'json' | 'xml'
+    source: Format
 }
 
 interface NormalizedTransaction {
-    format: 'json' | 'xml'
+    format: Format
     normalized: NormalizedData[]
-    rejected?: { record: unknown; reason: string }[]
+    rejected: { record: unknown; reason: string }[]
 }
 
-const detectFormat = (payload: unknown): 'json' | 'xml' => {
+export const detectFormat = (payload: unknown): 'json' | 'xml' => {
     if (typeof payload === 'string' && payload.trim().startsWith('<')) {
         return 'xml'
     } else if (typeof payload === 'object' && payload !== null) {
@@ -44,7 +46,7 @@ const detectFormat = (payload: unknown): 'json' | 'xml' => {
     }
 }
 
-const parseXmlIntoArray = async (xmlString: string): Promise<RawXmlForArray[]> => {
+export const parseXmlIntoArray = async (xmlString: string): Promise<RawXmlForArray[]> => {
     let parsed
 
     try {
@@ -67,7 +69,7 @@ const parseXmlIntoArray = async (xmlString: string): Promise<RawXmlForArray[]> =
     return rawRecords
 }
 
-const normalizeJsonRecord = (record: RawJsonRecord): NormalizedData => {
+export const normalizeJsonRecord = (record: RawJsonRecord): NormalizedData => {
     const { merchant, amount, date, category } = record
 
     if (!merchant || typeof merchant !== 'string' || !merchant.trim()) {
@@ -95,7 +97,7 @@ const normalizeJsonRecord = (record: RawJsonRecord): NormalizedData => {
     }
 }
 
-const normalizeXmlRecord = (record: RawXmlRecord): NormalizedData => {
+export const normalizeXmlRecord = (record: RawXmlRecord): NormalizedData => {
     const { description, debit, credit, postedDate } = record
 
     if (!description || typeof description !== 'string' || !description.trim()) {
@@ -137,7 +139,7 @@ const normalizeXmlRecord = (record: RawXmlRecord): NormalizedData => {
     }
 }
 
-const normalizePayload = async (payload: unknown): Promise<NormalizedTransaction> => {
+export const normalizePayload = async (payload: unknown): Promise<NormalizedTransaction> => {
     const format = detectFormat(payload)
 
     let rawRecords
@@ -164,20 +166,11 @@ const normalizePayload = async (payload: unknown): Promise<NormalizedTransaction
     return { format, normalized, rejected }
 }
 
-const summarizeByCategory = (transactions: NormalizedData[]): Record<string, number> => {
+export const summarizeByCategory = (transactions: NormalizedData[]): Record<string, number> => {
     const totals: Record<string, number> = {}
     for (const t of transactions) {
         const key = t.category || 'Uncategorized'
         totals[key] = Math.round(((totals[key] || 0) + t.amount) * 100) / 100
     }
     return totals
-}
-
-module.exports = {
-    detectFormat,
-    parseXmlIntoArray,
-    normalizeJsonRecord,
-    normalizeXmlRecord,
-    normalizePayload,
-    summarizeByCategory,
 }
